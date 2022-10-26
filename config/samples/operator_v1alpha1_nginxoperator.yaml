@@ -4,4 +4,4 @@ metadata:
   name: cluster
   namespace: nginx-operator-system
 spec:
-  replicas: 2
+  replicas: 1
