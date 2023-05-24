@@ -1,12 +1,9 @@
 /*
 Copyright 2022.
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -39,6 +36,10 @@ type NginxOperatorSpec struct {
 	// ForceRedploy is any string, modifying this field
 	// instructs the Operator to redeploy the Operand
 	ForceRedploy string `json:"forceRedploy,omitempty"`
+	//AppLimitCost is the limit for the deployment of an app
+	AppLimitCost *int32 `json:"appLimitCost,omitempty"`
+	//IsDeployed indicates if the app is deployed on this cluster
+	IsDeployed bool `json:"isDeployed,omitempty"`
 }
 
 // NginxOperatorStatus defines the observed state of NginxOperator

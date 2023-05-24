@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubecost-cost-analyzer
+  namespace: kubecost
+  labels:
+    app: kubecost-cost-analyzer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kubecost-cost-analyzer
+  template:
+    metadata:
+      labels:
+        app: kubecost-cost-analyzer
+    spec:
+      containers:
+      - name: cost-model
+        image: nginx:1.14.2
+        resources:
+          requests:
+            cpu: "1m"
+            memory: "1Mi"
+      - name: cost-analyzer-frontend
+        image: nginx:1.14.2
+        resources:
+          requests:
+            cpu: "1m"
+            memory: "1Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: default-deployment
+  labels:
+    app: default-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: default-deployment
+  template:
+    metadata:
+      labels:
+        app: default-deployment
+    spec:
+      containers:
+      - name: container-1
+        image: nginx:1.14.2
+        resources:
+          requests:
+            cpu: "10m"
+            memory: "10Mi"

@@ -35,10 +35,17 @@ spec:
           spec:
             description: NginxOperatorSpec defines the desired state of NginxOperator
             properties:
+              appLimitCost:
+                description: AppLimitCost is the limit for the deployment of an app
+                format: int32
+                type: integer
               forceRedploy:
                 description: ForceRedploy is any string, modifying this field instructs
                   the Operator to redeploy the Operand
                 type: string
+              isDeployed:
+                description: IsDeployed indicates if the app is deployed on this cluster
+                type: boolean
               port:
                 description: Port is the port number to expose on the Nginx Pod
                 format: int32

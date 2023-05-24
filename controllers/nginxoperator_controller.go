@@ -15,13 +15,18 @@ package controllers
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"math"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	operatorv1alpha1 "github.com/example/nginx-operator/api/v1alpha1"
 	"github.com/example/nginx-operator/assets"
-	apiv2 "github.com/operator-framework/api/pkg/operators/v2"
-	"github.com/operator-framework/operator-lib/conditions"
+	"github.com/nats-io/nats.go"
+	"github.com/samuel/go-zookeeper/zk"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -38,6 +43,35 @@ type NginxOperatorReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
+
+var operatorID string
+
+// zooker conections and node
+var zkConn *zk.Conn
+var operatorPath string
+
+// Se o operador é lider ou não
+var isLeader bool
+
+// nats conection
+var nc *nats.Conn
+
+//go:embed app/testspecs.yaml
+var content embed.FS
+
+// estrura para armazenar a informação de cada operador
+type OperatorInfo struct {
+	CostPredict    float64
+	AllocationCost float64
+	Deployed       bool
+	Limit          float64
+}
+
+// Custo previsto dos operadores
+var costs = make(map[string]OperatorInfo)
+
+// Custo alocações dos operadores
+//var allocations = make(map[string]float64)
 
 //+kubebuilder:rbac:groups=operator.example.com,resources=nginxoperators,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=operator.example.com,resources=nginxoperators/status,verbs=get;update;patch
@@ -59,7 +93,71 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	logger := log.FromContext(ctx)
 
+	fmt.Println("Operator ID Reconcile 77777: ")
+	fmt.Println(operatorID)
+
+	// Get the list of all ephemeral nodes under the same path
+	operators, _, err2 := zkConn.Children("/operators")
+	if err2 != nil {
+		return ctrl.Result{}, err2
+		//panic(err2)
+	}
+
+	isLeader = true
+
+	//TODO: USAR ISTO PARA DAR CLEAR DA LISTA DOS COSTS, PARA ELIMINAR OPERADORES QUE JÁ NÃO EXISTEM
+	for _, operator := range operators {
+		fmt.Println(operator)
+		if operator < strings.TrimPrefix(operatorPath, "/operators/") {
+			fmt.Println("ENTREI NO FALSE")
+			isLeader = false
+			break
+		}
+	}
+	if isLeader {
+		fmt.Println("Este operador é lider")
+	} else {
+		fmt.Println("Este operador não é lider")
+	}
+
+	sort.Strings(operators)
+	leaderOperator := operators[0]
+	fmt.Println("Operador lider " + leaderOperator)
+
+	//Atualizar map com os custos (eliminar operadores que já não se encontram ativos)
+	aux := make(map[string]OperatorInfo)
+
+	if len(costs) > 0 {
+
+		for k, v := range costs {
+			for _, operator := range operators {
+				if k == operator {
+					aux[k] = v
+					break
+				}
+			}
+		}
+		costs = aux
+	}
+
+	//Print do map
+	for k, v := range costs {
+		fmt.Printf("ID: %s\n", k)
+		fmt.Printf("CostPredict: %.6f\n", v.CostPredict)
+		fmt.Printf("AllocationCost: %.6f\n", v.AllocationCost)
+		fmt.Printf("Deployed: %v\n", v.Deployed)
+		fmt.Println("--------------------")
+	}
+
+	fmt.Println("Pedido Allocation")
+	jsonAllocation := AtualCostRequest()
+	allocationCost := decodeJsonAllocationApiKubecost(jsonAllocation)
+	fmt.Println("alocation cost:")
+	fmt.Println(allocationCost)
+
+	//Cr atual do operador
 	operatorCR := &operatorv1alpha1.NginxOperator{}
+
 	//get operador existente
 	err := r.Get(ctx, req.NamespacedName, operatorCR)
 
@@ -69,6 +167,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	} else if err != nil {
 		logger.Error(err, "Error getting operator resource object")
 		meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
+
 			Type:               "OperatorDegraded",
 			Status:             metav1.ConditionTrue,
 			Reason:             operatorv1alpha1.ReasonCRNotAvailable,
@@ -78,82 +177,384 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 	}
 
-	deployment := &appsv1.Deployment{}
+	fmt.Println("======Limite de Custo====")
+	fmt.Println(*operatorCR.Spec.AppLimitCost)
 
-	create := false
+	fmt.Println("=======APP=======")
+	fmt.Println(operatorCR.Spec.IsDeployed)
+	message := "ola sou o operador " + operatorID
 
-	err = r.Get(ctx, req.NamespacedName, deployment)
-	if err != nil && errors.IsNotFound(err) {
-		create = true
-		//Buscar deployment do nginx ao ficheiro nginx_deployment.yaml
-		deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
-	} else if err != nil {
-		logger.Error(err, "Error getting existing Nginx deployment.")
-		meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
-			Type:               "OperatorDegraded",
-			Status:             metav1.ConditionTrue,
-			Reason:             operatorv1alpha1.ReasonDeploymentNotAvailable,
-			LastTransitionTime: metav1.NewTime(time.Now()),
-			Message:            fmt.Sprintf("unable to get operand deployment: %s", err.Error()),
-		})
-		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+	if err := nc.Publish("test", []byte(message)); err != nil {
+		panic(err)
 	}
+	fmt.Println("Messagem enviada")
 
-	deployment.Namespace = req.Namespace
-	deployment.Name = req.Name
+	jsonSTR := PredictCostRequest()
 
-	if operatorCR.Spec.Replicas != nil {
-		deployment.Spec.Replicas = operatorCR.Spec.Replicas
-	}
-	if operatorCR.Spec.Port != nil {
-		deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
-	}
-	ctrl.SetControllerReference(operatorCR, deployment, r.Scheme)
+	totalCost := decodeJsonPreditApiKubecost(jsonSTR)
 
-	if create {
-		err = r.Create(ctx, deployment)
-	} else {
-		err = r.Update(ctx, deployment)
-	}
-	if err != nil {
-		meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
-			Type:               "OperatorDegraded",
-			Status:             metav1.ConditionTrue,
-			Reason:             operatorv1alpha1.ReasonOperandDeploymentFailed,
-			LastTransitionTime: metav1.NewTime(time.Now()),
-			Message:            fmt.Sprintf("ERRO: unable to update operand deployment: %s NAMESPACE %s", err.Error(), deployment.Namespace),
-		})
-		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
-	}
+	messageCost := "ID: " + operatorID + " CostPredict: " +
+		strconv.FormatFloat(totalCost, 'f', 6, 64) +
+		" AllocationCost: " + strconv.FormatFloat(allocationCost, 'f', 6, 64) +
+		" Deployed: " + strconv.FormatBool(operatorCR.Spec.IsDeployed) +
+		" Limit: " + strconv.Itoa(int(*operatorCR.Spec.AppLimitCost))
 
-	meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
-		Type:               "OperatorDegraded",
-		Status:             metav1.ConditionFalse,
-		Reason:             operatorv1alpha1.ReasonSucceeded,
-		LastTransitionTime: metav1.NewTime(time.Now()),
-		Message:            "operator successfully reconciling",
+	if err := nc.Publish("PredictCost", []byte(messageCost)); err != nil {
+		panic(err)
+	}
+	fmt.Println("Messagem Custo previsto enviada")
+
+	//Print do map
+	for k, v := range costs {
+		fmt.Printf("ID: %s\n", k)
+		fmt.Printf("CostPredict: %.6f\n", v.CostPredict)
+		fmt.Printf("AllocationCost: %.6f\n", v.AllocationCost)
+		fmt.Printf("Deployed: %v\n", v.Deployed)
+		fmt.Println("--------------------")
+	}
+	// Subscreva para ouvir mensagens de custo previsto
+	nc.QueueSubscribe("PredictCost", "operators."+operatorID, func(m *nats.Msg) {
+
+		fmt.Printf("Received message: %s\n", string(m.Data))
+
+		split := strings.Split(string(m.Data), " ")
+		if len(split) < 9 {
+			fmt.Println("Formato errado")
+		}
+		fmt.Println("SIZE DO SPLIT: ")
+		fmt.Println(len(split))
+		if len(split) == 10 {
+
+			id := split[1]
+			cost, err := strconv.ParseFloat(split[3], 64)
+			if err != nil {
+				panic(err)
+			}
+			allocation, err := strconv.ParseFloat(split[5], 64)
+			if err != nil {
+				panic(err)
+			}
+
+			deployed, err := strconv.ParseBool(split[7])
+			if err != nil {
+				panic(err)
+			}
+
+			appLimit, err := strconv.ParseFloat(split[9], 64)
+			if err != nil {
+				panic(err)
+			}
+
+			fmt.Println(id)
+			fmt.Println(cost)
+			fmt.Println(allocation)
+			fmt.Println(deployed)
+			fmt.Println(appLimit)
+			fmt.Println("=======================================================\n===============================\n===========")
+
+			info := OperatorInfo{
+				CostPredict:    cost,
+				AllocationCost: allocation,
+				Deployed:       deployed,
+				Limit:          appLimit,
+			}
+
+			costs[id] = info
+		}
 	})
-	r.Status().Update(ctx, operatorCR)
 
-	condition, err := conditions.InClusterFactory{Client: r.Client}.
+	if allocationCost < float64(*operatorCR.Spec.AppLimitCost) {
+		fmt.Println("O preco da aplicacao encontra-se dentro do limite!")
+	} else if allocationCost >= float64(*operatorCR.Spec.AppLimitCost) && operatorCR.Spec.IsDeployed == true {
+		fmt.Println("O preço da aplicacao nao se encontra dentro do limite!")
+		fmt.Println("Necessário tomar decisão!")
+
+		messageCost := "ID: " + operatorID + " Reason: " + "LimiteViolated"
+
+		if err := nc.Publish("Decisons", []byte(messageCost)); err != nil {
+			panic(err)
+		}
+
+		//Tirar o deployment logo aqui ?
+		operatorCR.Spec.IsDeployed = false
+		err = r.Update(ctx, operatorCR)
+		if err != nil && errors.IsNotFound(err) {
+			logger.Info("Operator resource object not found.")
+			//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+		} else {
+			logger.Info("Operator resource couldnt be updated.")
+			//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+		}
+
+		fmt.Println("Mensagem Publicada para Decisons")
+	}
+
+	if operatorID == leaderOperator {
+		fmt.Println("Sou o lider, vou observar se existem decisões a tomar")
+		// Subscreva para ouvir mensagens de custo previsto
+		nc.QueueSubscribe("Decisons", "operators."+operatorID, func(m *nats.Msg) {
+
+			fmt.Printf("Received message: %s\n", string(m.Data))
+			fmt.Println("TOMAR DECISÃO!!!!")
+			split := strings.Split(string(m.Data), " ")
+			if len(split) < 4 {
+				fmt.Println("Formato errado")
+			}
+
+			id := split[1]
+			reason := split[3]
+			if err != nil {
+				panic(err)
+			}
+
+			fmt.Println(id)
+			fmt.Println(reason)
+			fmt.Println("---------------------------------")
+
+			//Fazer uma queue com as mensagens para evitar que se tomam duas decisões ao mesmo
+			//tempo, e depois os valores não estejam atualizados
+
+			selected := migrateApp(id)
+			fmt.Println("SELECIONADO: " + selected)
+
+			messageOrder := "LeaderID: " + operatorID + " Destination: " + selected + " AppDeploy: true"
+
+			if err := nc.Publish("Orders", []byte(messageOrder)); err != nil {
+				panic(err)
+			}
+		})
+	}
+
+	//TODO: Subcribe para ver se existem "ordens a efetuar"
+	nc.QueueSubscribe("Orders", "operators."+operatorID, func(m *nats.Msg) {
+
+		fmt.Printf("Received Order: %s\n", string(m.Data))
+		split := strings.Split(string(m.Data), " ")
+
+		if len(split) < 6 {
+			fmt.Println("Formato errado")
+		}
+
+		id_leader := split[1]
+		id_selected := split[3]
+		order, err := strconv.ParseBool(split[5])
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Println(id_leader)
+		fmt.Println(id_selected)
+		fmt.Println(order)
+		fmt.Println("---------------------------------")
+
+		//Verificar se sou o operador responsável por executar a ordem e se quem fez a ordem foi o lider
+		if operatorID == id_selected && leaderOperator == id_leader {
+			//executar a ordem
+			if order == true {
+				//Update Cr to deploy app
+				operatorCR.Spec.IsDeployed = true
+
+				err = r.Update(ctx, operatorCR)
+				if err != nil && errors.IsNotFound(err) {
+					logger.Info("Operator resource object not found.")
+					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+				} else {
+					logger.Info("Operator resource couldnt be updated.")
+					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+				}
+			}
+		}
+	})
+
+	if operatorCR.Spec.IsDeployed {
+		deployment := &appsv1.Deployment{}
+
+		create := false
+
+		err = r.Get(ctx, req.NamespacedName, deployment)
+		if err != nil && errors.IsNotFound(err) {
+			create = true
+			//Buscar deployment do nginx ao ficheiro nginx_deployment.yaml
+			deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
+		} else if err != nil {
+			logger.Error(err, "Error getting existing Nginx deployment.")
+			meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
+				Type:               "OperatorDegraded",
+				Status:             metav1.ConditionTrue,
+				Reason:             operatorv1alpha1.ReasonDeploymentNotAvailable,
+				LastTransitionTime: metav1.NewTime(time.Now()),
+				Message:            fmt.Sprintf("unable to get operand deployment: %s", err.Error()),
+			})
+			return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+		}
+
+		deployment.Namespace = req.Namespace
+		deployment.Name = req.Name
+
+		if operatorCR.Spec.Replicas != nil {
+			deployment.Spec.Replicas = operatorCR.Spec.Replicas
+		}
+		if operatorCR.Spec.Port != nil {
+			deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
+		}
+		ctrl.SetControllerReference(operatorCR, deployment, r.Scheme)
+
+		if create {
+			err = r.Create(ctx, deployment)
+		} else {
+			err = r.Update(ctx, deployment)
+		}
+		if err != nil {
+			meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
+				Type:               "OperatorDegraded",
+				Status:             metav1.ConditionTrue,
+				Reason:             operatorv1alpha1.ReasonOperandDeploymentFailed,
+				LastTransitionTime: metav1.NewTime(time.Now()),
+				Message:            fmt.Sprintf("ERRO: unable to update operand deployment: %s NAMESPACE %s", err.Error(), deployment.Namespace),
+			})
+			return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+		}
+
+		meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
+			Type:               "OperatorDegraded",
+			Status:             metav1.ConditionFalse,
+			Reason:             operatorv1alpha1.ReasonSucceeded,
+			LastTransitionTime: metav1.NewTime(time.Now()),
+			Message:            "operator successfully reconciling",
+		})
+		r.Status().Update(ctx, operatorCR)
+
+		/*condition, err := conditions.InClusterFactory{Client: r.Client}.
 		NewCondition(apiv2.ConditionType(apiv2.Upgradeable))
 
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+		if err != nil {
+			return ctrl.Result{}, err
+		}*/
 
-	err = condition.Set(ctx, metav1.ConditionTrue,
+		/*err = condition.Set(ctx, metav1.ConditionTrue,
 		conditions.WithReason("OperatorUpgradeable"),
 		conditions.WithMessage("The operator is currently upgradeable"))
-	if err != nil {
-		return ctrl.Result{}, err
+
+		if err != nil {
+			return ctrl.Result{}, err
+		}*/
+
+		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 	}
 
-	return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+	return ctrl.Result{}, nil
+}
+
+/*
+func generateOperatorID() {
+
+	rand.Seed(time.Now().UnixNano())
+
+	operatorID = rand.New(rand.NewSource(time.Now().UnixNano())).Int63()
+
+	fmt.Println("Operator ID: ")
+	fmt.Println(operatorID)
+}*/
+
+func connectToNats() error {
+	var err error
+	nc, err = nats.Connect("nats://my-nats.nats")
+	if err != nil {
+		fmt.Println("Could not conect to nats server")
+		return err
+	}
+	return nil
+}
+
+func connectToZookeeper() error {
+	var err error
+	zkConn, _, err = zk.Connect([]string{"ab707b55c178048478d36379cc26f4f7-1423547521.eu-west-1.elb.amazonaws.com:2181"}, time.Second*5)
+	if err != nil {
+		fmt.Println("Could not conect to zookeper server")
+		return err
+	}
+	return nil
+
+}
+
+func createEphemeralNode() error {
+	var err error
+	operatorPath, err = zkConn.Create("/operators/operator-", []byte{}, zk.FlagEphemeral|zk.FlagSequence, zk.WorldACL(zk.PermAll))
+	if err != nil {
+		return err
+	}
+	fmt.Println("Before trim")
+	fmt.Println(operatorPath)
+	operatorID = strings.TrimPrefix(operatorPath, "/operators/")
+	fmt.Println("TRIM")
+	fmt.Println(operatorID)
+	return nil
+
+}
+
+func migrateApp(id string) string {
+
+	var selectedOperator string
+
+	lowestdiff := math.MaxFloat64
+	fmt.Println("Função de migrar")
+	if len(costs) == 0 {
+		fmt.Println("O mapa está vazio.")
+	} else {
+		fmt.Println("O mapa não está vazio.")
+	}
+	for k, v := range costs {
+		fmt.Println("Opearador idddddd: " + k)
+		fmt.Println(v.AllocationCost)
+		fmt.Println(v.CostPredict)
+		fmt.Println(v.Deployed)
+		fmt.Println(v.Limit)
+		if (v.AllocationCost+v.CostPredict <= v.Limit) && v.Deployed == false {
+			fmt.Println("entrei no if")
+			fmt.Println(lowestdiff)
+			costDiff := v.Limit - (v.AllocationCost + v.CostPredict)
+			if costDiff < lowestdiff {
+				lowestdiff = costDiff
+				selectedOperator = k
+			}
+		}
+
+		/*aux := v.AllocationCost - v.CostPredict
+		if aux < custoMaisBaixo && k != id && v.Deployed == false {
+			custoMaisBaixo = v.CostPredict
+			idMaisBaixo = k
+		}*/
+	}
+
+	if selectedOperator == "" {
+		fmt.Println("No Operators Available")
+		return "No Operators Available"
+	} else {
+		//fmt.Println(idMaisBaixo)
+		fmt.Println("A migrar de " + id + "para o operador " + selectedOperator)
+		return selectedOperator
+	}
+
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NginxOperatorReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	//generateOperatorID()
+	if err := connectToNats(); err != nil {
+		panic(err)
+	}
+	//defer nc.Close()
+	fmt.Println("Connected to NATS server!")
+	if err := connectToZookeeper(); err != nil {
+		panic(err)
+	}
+	fmt.Println("Connected to Zookeeper server!")
+	if err := createEphemeralNode(); err != nil {
+		panic(err)
+	}
+	fmt.Println("Node ephemeral created")
+	fmt.Println(operatorPath)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&operatorv1alpha1.NginxOperator{}).
 		Owns(&appsv1.Deployment{}).

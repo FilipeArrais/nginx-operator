@@ -4,4 +4,6 @@ metadata:
   name: cluster
   namespace: nginx-operator-system
 spec:
-  replicas: 1
+  replicas: 3
+  appLimitCost: 1
+  isDeployed: true
