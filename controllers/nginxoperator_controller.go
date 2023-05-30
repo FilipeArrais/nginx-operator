@@ -274,27 +274,6 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			panic(err)
 		}
 
-		//Cr atual do operador
-		operatorCR := &operatorv1alpha1.NginxOperator{}
-
-		//get operador existente
-		err := r.Get(ctx, req.NamespacedName, operatorCR)
-
-		//Tirar o deployment logo aqui ?
-		operatorCR.Spec.IsDeployed = false
-		err = r.Update(ctx, operatorCR)
-		if err != nil && errors.IsNotFound(err) {
-			logger.Info("Operator resource object not found.")
-			operatorCR.Spec.IsDeployed = true
-			//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
-		} else if err != nil {
-			logger.Info("Operator resource couldnt be updated 1.")
-			fmt.Println(err)
-			operatorCR.Spec.IsDeployed = true
-
-			//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
-		}
-
 		fmt.Println("Mensagem Publicada para Decisons")
 	}
 
@@ -328,12 +307,23 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			selected := migrateApp(id)
 			fmt.Println("SELECIONADO: " + selected)
 
-			messageOrder := "LeaderID: " + operatorID + " Destination: " + selected + " AppDeploy: true"
+			if selected != "" {
+				messageOrder := "LeaderID: " + operatorID + " Destination: " + selected + " AppDeploy: true"
 
-			if err := nc.Publish("Orders", []byte(messageOrder)); err != nil {
-				panic(err)
+				if err := nc.Publish("Orders", []byte(messageOrder)); err != nil {
+					panic(err)
+				}
+				fmt.Println("Messagem enviada orders!")
+
+				messageOrder2 := "LeaderID: " + operatorID + " Destination: " + id + " AppDeploy: false"
+
+				if err := nc.Publish("Orders", []byte(messageOrder2)); err != nil {
+					panic(err)
+				}
+				fmt.Println("Messagem enviada orders! 2")
+
 			}
-			fmt.Println("Messagem enviada orders!")
+
 		})
 	}
 
@@ -387,6 +377,27 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					fmt.Println(err)
 					fmt.Println(err)
 					fmt.Println("ola")
+					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+				}
+			} else {
+				//Cr atual do operador
+				operatorCR := &operatorv1alpha1.NginxOperator{}
+
+				//get operador existente
+				err := r.Get(ctx, req.NamespacedName, operatorCR)
+
+				//Tirar o deployment logo aqui ?
+				operatorCR.Spec.IsDeployed = false
+				err = r.Update(ctx, operatorCR)
+				if err != nil && errors.IsNotFound(err) {
+					logger.Info("Operator resource object not found.")
+					operatorCR.Spec.IsDeployed = true
+					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+				} else if err != nil {
+					logger.Info("Operator resource couldnt be updated 1.")
+					fmt.Println(err)
+					operatorCR.Spec.IsDeployed = true
+
 					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 				}
 			}
@@ -561,7 +572,7 @@ func migrateApp(id string) string {
 
 	if selectedOperator == "" {
 		fmt.Println("No Operators Available")
-		return "No Operators Available"
+		return ""
 	} else {
 		//fmt.Println(idMaisBaixo)
 		fmt.Println("A migrar de " + id + " para o operador " + selectedOperator)
