@@ -35,7 +35,7 @@ func AtualCostRequest() string {
 	}
 
 	// Exibir a resposta
-	fmt.Println(string(body))
+	//fmt.Println(string(body))
 	return string(body)
 
 }

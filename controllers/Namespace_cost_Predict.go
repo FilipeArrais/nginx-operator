@@ -40,7 +40,7 @@ func PredictCostRequest() string {
 	}
 
 	// Print the response body
-	fmt.Println(string(body))
+	//fmt.Println(string(body))
 
 	return string(body)
 

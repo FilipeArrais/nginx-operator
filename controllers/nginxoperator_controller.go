@@ -177,7 +177,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 	}
 
-	fmt.Println("======Limite de Custo====")
+	/*fmt.Println("======Limite de Custo====")
 	fmt.Println(*operatorCR.Spec.AppLimitCost)
 
 	fmt.Println("=======APP=======")
@@ -187,7 +187,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := nc.Publish("test", []byte(message)); err != nil {
 		panic(err)
 	}
-	fmt.Println("Messagem enviada")
+	fmt.Println("Messagem enviada")*/
 
 	jsonSTR := PredictCostRequest()
 
@@ -205,13 +205,14 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	fmt.Println("Messagem Custo previsto enviada")
 
 	//Print do map
-	for k, v := range costs {
+	/*for k, v := range costs {
 		fmt.Printf("ID: %s\n", k)
 		fmt.Printf("CostPredict: %.6f\n", v.CostPredict)
 		fmt.Printf("AllocationCost: %.6f\n", v.AllocationCost)
 		fmt.Printf("Deployed: %v\n", v.Deployed)
 		fmt.Println("--------------------")
-	}
+	}*/
+
 	// Subscreva para ouvir mensagens de custo previsto
 	nc.QueueSubscribe("PredictCost", "operators."+operatorID, func(m *nats.Msg) {
 
@@ -221,8 +222,6 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if len(split) < 9 {
 			fmt.Println("Formato errado")
 		}
-		fmt.Println("SIZE DO SPLIT: ")
-		fmt.Println(len(split))
 		if len(split) == 10 {
 
 			id := split[1]
@@ -245,13 +244,13 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				panic(err)
 			}
 
-			fmt.Println(id)
+			/*fmt.Println(id)
 			fmt.Println(cost)
 			fmt.Println(allocation)
 			fmt.Println(deployed)
 			fmt.Println(appLimit)
 			fmt.Println("=======================================================\n===============================\n===========")
-
+			*/
 			info := OperatorInfo{
 				CostPredict:    cost,
 				AllocationCost: allocation,
@@ -275,14 +274,24 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			panic(err)
 		}
 
+		//Cr atual do operador
+		operatorCR := &operatorv1alpha1.NginxOperator{}
+
+		//get operador existente
+		err := r.Get(ctx, req.NamespacedName, operatorCR)
+
 		//Tirar o deployment logo aqui ?
 		operatorCR.Spec.IsDeployed = false
 		err = r.Update(ctx, operatorCR)
 		if err != nil && errors.IsNotFound(err) {
 			logger.Info("Operator resource object not found.")
+			operatorCR.Spec.IsDeployed = true
 			//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
-		} else {
-			logger.Info("Operator resource couldnt be updated.")
+		} else if err != nil {
+			logger.Info("Operator resource couldnt be updated 1.")
+			fmt.Println(err)
+			operatorCR.Spec.IsDeployed = true
+
 			//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 		}
 
@@ -302,14 +311,16 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 
 			id := split[1]
-			reason := split[3]
-			if err != nil {
+			//reason := split[3]
+			/*if err != nil {
+				fmt.Println("Panico")
 				panic(err)
-			}
+			}*/
 
-			fmt.Println(id)
+			/*.Println(id)
 			fmt.Println(reason)
 			fmt.Println("---------------------------------")
+			*/
 
 			//Fazer uma queue com as mensagens para evitar que se tomam duas decisões ao mesmo
 			//tempo, e depois os valores não estejam atualizados
@@ -322,6 +333,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			if err := nc.Publish("Orders", []byte(messageOrder)); err != nil {
 				panic(err)
 			}
+			fmt.Println("Messagem enviada orders!")
 		})
 	}
 
@@ -342,15 +354,23 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			panic(err)
 		}
 
-		fmt.Println(id_leader)
+		/*fmt.Println(id_leader)
 		fmt.Println(id_selected)
 		fmt.Println(order)
 		fmt.Println("---------------------------------")
+		*/
 
 		//Verificar se sou o operador responsável por executar a ordem e se quem fez a ordem foi o lider
 		if operatorID == id_selected && leaderOperator == id_leader {
 			//executar a ordem
 			if order == true {
+
+				//Cr atual do operador
+				operatorCR := &operatorv1alpha1.NginxOperator{}
+
+				//get operador existente
+				err := r.Get(ctx, req.NamespacedName, operatorCR)
+
 				//Update Cr to deploy app
 				operatorCR.Spec.IsDeployed = true
 
@@ -358,8 +378,15 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				if err != nil && errors.IsNotFound(err) {
 					logger.Info("Operator resource object not found.")
 					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
-				} else {
+					operatorCR.Spec.IsDeployed = false
+				} else if err != nil {
 					logger.Info("Operator resource couldnt be updated.")
+					operatorCR.Spec.IsDeployed = false
+					fmt.Println(err)
+					fmt.Println(err)
+					fmt.Println(err)
+					fmt.Println(err)
+					fmt.Println("ola")
 					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 				}
 			}
@@ -367,6 +394,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	})
 
 	if operatorCR.Spec.IsDeployed {
+		fmt.Println("A Dar deploy ou verificar deployment")
 		deployment := &appsv1.Deployment{}
 
 		create := false
@@ -440,6 +468,21 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}*/
 
 		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+
+	} else if operatorCR.Spec.IsDeployed == false {
+		fmt.Println("Não há deployment para fazer")
+		deployment := &appsv1.Deployment{}
+		err = r.Get(ctx, req.NamespacedName, deployment)
+		if err == nil {
+			err = r.Delete(ctx, deployment)
+			if err != nil {
+				// Lidar com o erro ao excluir o deployment
+				return ctrl.Result{}, err
+			}
+		} else {
+			fmt.Println("Não existe deployment para apagar")
+		}
+
 	}
 
 	return ctrl.Result{}, nil
@@ -498,11 +541,7 @@ func migrateApp(id string) string {
 
 	lowestdiff := math.MaxFloat64
 	fmt.Println("Função de migrar")
-	if len(costs) == 0 {
-		fmt.Println("O mapa está vazio.")
-	} else {
-		fmt.Println("O mapa não está vazio.")
-	}
+
 	for k, v := range costs {
 		fmt.Println("Opearador idddddd: " + k)
 		fmt.Println(v.AllocationCost)
@@ -518,12 +557,6 @@ func migrateApp(id string) string {
 				selectedOperator = k
 			}
 		}
-
-		/*aux := v.AllocationCost - v.CostPredict
-		if aux < custoMaisBaixo && k != id && v.Deployed == false {
-			custoMaisBaixo = v.CostPredict
-			idMaisBaixo = k
-		}*/
 	}
 
 	if selectedOperator == "" {
@@ -531,7 +564,7 @@ func migrateApp(id string) string {
 		return "No Operators Available"
 	} else {
 		//fmt.Println(idMaisBaixo)
-		fmt.Println("A migrar de " + id + "para o operador " + selectedOperator)
+		fmt.Println("A migrar de " + id + " para o operador " + selectedOperator)
 		return selectedOperator
 	}
 
