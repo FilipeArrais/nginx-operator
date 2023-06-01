@@ -6,18 +6,40 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+
+	"github.com/example/nginx-operator/assets"
 )
 
-func PredictCostRequest() string {
+func PredictCostRequest(replicas *int32, namespace string) string {
 
-	url := "http://kubecost-cost-analyzer.prometheus:9090/model/prediction/speccost?clusterID=cluster-one&defaultNamespace=teste"
+	url := "http://kubecost-cost-analyzer.prometheus:9090/model/prediction/speccost?clusterID=cluster-one&defaultNamespace=" +
+		namespace
 
-	yamlApp, err2 := content.ReadFile("app/testspecs.yaml")
-	if err2 != nil {
-		panic(err2)
+	var yamlBytes []byte
+
+	if replicas != nil {
+
+		//fmt.Println("tem numero de replicas")
+
+		yamlApp := assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
+
+		yamlApp.Spec.Replicas = replicas
+
+		jsonBytes, err := json.Marshal(yamlApp)
+		if err != nil {
+			fmt.Println("Erro ao converter para JSON:", err)
+		}
+
+		yamlBytes = []byte(jsonBytes)
+
+		//fmt.Println(yamlBytes)
+
+	} else {
+
+		yamlBytes = assets.GetDeploymentFromFileBytes("manifests/nginx_deployment.yaml")
 	}
 
-	reqCost, err2 := http.NewRequest("POST", url, bytes.NewBuffer(yamlApp))
+	reqCost, err2 := http.NewRequest("POST", url, bytes.NewBuffer(yamlBytes))
 	if err2 != nil {
 		panic(err2)
 	}

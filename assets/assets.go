@@ -35,3 +35,11 @@ func GetDeploymentFromFile(name string) *appsv1.Deployment {
 	}
 	return deploymentObject.(*appsv1.Deployment)
 }
+
+func GetDeploymentFromFileBytes(name string) []byte {
+	yamlApp, err2 := manifests.ReadFile(name)
+	if err2 != nil {
+		panic(err2)
+	}
+	return yamlApp
+}

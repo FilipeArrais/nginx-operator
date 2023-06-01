@@ -7,9 +7,11 @@ import (
 	"net/http"
 )
 
-func AtualCostRequest() string {
+func AtualCostRequest(namespace string) string {
 
-	url := "http://kubecost-cost-analyzer.prometheus:9090/model/allocation?window=7d&&filterNamespaces=prometheus&&aggregate=namespace&&accumulate=true"
+	url := "http://kubecost-cost-analyzer.prometheus:9090/model/allocation?window=30d&&filterNamespaces=" +
+		namespace +
+		"&&aggregate=namespace&&accumulate=true"
 
 	// Criação de uma requisição GET
 	req, err := http.NewRequest("GET", url, nil)

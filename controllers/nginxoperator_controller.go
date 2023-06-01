@@ -15,7 +15,6 @@ package controllers
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"math"
 	"sort"
@@ -56,9 +55,6 @@ var isLeader bool
 // nats conection
 var nc *nats.Conn
 
-//go:embed app/testspecs.yaml
-var content embed.FS
-
 // estrura para armazenar a informação de cada operador
 type OperatorInfo struct {
 	CostPredict    float64
@@ -93,6 +89,26 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	logger := log.FromContext(ctx)
 
+	//Cr atual do operador
+	operatorCR := &operatorv1alpha1.NginxOperator{}
+
+	//get operador existente
+	err := r.Get(ctx, req.NamespacedName, operatorCR)
+
+	if err != nil && errors.IsNotFound(err) {
+		logger.Info("Operator resource object not found.")
+		return ctrl.Result{}, nil
+	} else if err != nil {
+		logger.Error(err, "Error getting operator resource object")
+		meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
+			Type:               "OperatorDegraded",
+			Status:             metav1.ConditionTrue,
+			Reason:             operatorv1alpha1.ReasonCRNotAvailable,
+			LastTransitionTime: metav1.NewTime(time.Now()), Message: fmt.Sprintf("ERRO: unable to get operator custom resource: %s", err.Error()),
+		})
+		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
+	}
+
 	fmt.Println("Operator ID Reconcile 77777: ")
 	fmt.Println(operatorID)
 
@@ -105,7 +121,6 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	isLeader = true
 
-	//TODO: USAR ISTO PARA DAR CLEAR DA LISTA DOS COSTS, PARA ELIMINAR OPERADORES QUE JÁ NÃO EXISTEM
 	for _, operator := range operators {
 		fmt.Println(operator)
 		if operator < strings.TrimPrefix(operatorPath, "/operators/") {
@@ -150,32 +165,10 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	fmt.Println("Pedido Allocation")
-	jsonAllocation := AtualCostRequest()
+	jsonAllocation := AtualCostRequest(req.Namespace)
 	allocationCost := decodeJsonAllocationApiKubecost(jsonAllocation)
 	fmt.Println("alocation cost:")
 	fmt.Println(allocationCost)
-
-	//Cr atual do operador
-	operatorCR := &operatorv1alpha1.NginxOperator{}
-
-	//get operador existente
-	err := r.Get(ctx, req.NamespacedName, operatorCR)
-
-	if err != nil && errors.IsNotFound(err) {
-		logger.Info("Operator resource object not found.")
-		return ctrl.Result{}, nil
-	} else if err != nil {
-		logger.Error(err, "Error getting operator resource object")
-		meta.SetStatusCondition(&operatorCR.Status.Conditions, metav1.Condition{
-
-			Type:               "OperatorDegraded",
-			Status:             metav1.ConditionTrue,
-			Reason:             operatorv1alpha1.ReasonCRNotAvailable,
-			LastTransitionTime: metav1.NewTime(time.Now()),
-			Message:            fmt.Sprintf("ERRO: unable to get operator custom resource: %s", err.Error()),
-		})
-		return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
-	}
 
 	/*fmt.Println("======Limite de Custo====")
 	fmt.Println(*operatorCR.Spec.AppLimitCost)
@@ -189,7 +182,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	fmt.Println("Messagem enviada")*/
 
-	jsonSTR := PredictCostRequest()
+	jsonSTR := PredictCostRequest(operatorCR.Spec.Replicas, req.Namespace)
 
 	totalCost := decodeJsonPreditApiKubecost(jsonSTR)
 
@@ -327,7 +320,6 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		})
 	}
 
-	//TODO: Subcribe para ver se existem "ordens a efetuar"
 	nc.QueueSubscribe("Orders", "operators."+operatorID, func(m *nats.Msg) {
 
 		fmt.Printf("Received Order: %s\n", string(m.Data))
@@ -550,7 +542,8 @@ func migrateApp(id string) string {
 
 	var selectedOperator string
 
-	lowestdiff := math.MaxFloat64
+	lowest := math.MaxFloat64
+
 	fmt.Println("Função de migrar")
 
 	for k, v := range costs {
@@ -561,10 +554,8 @@ func migrateApp(id string) string {
 		fmt.Println(v.Limit)
 		if (v.AllocationCost+v.CostPredict <= v.Limit) && v.Deployed == false {
 			fmt.Println("entrei no if")
-			fmt.Println(lowestdiff)
-			costDiff := v.Limit - (v.AllocationCost + v.CostPredict)
-			if costDiff < lowestdiff {
-				lowestdiff = costDiff
+			if v.CostPredict < lowest {
+				lowest = v.CostPredict
 				selectedOperator = k
 			}
 		}
