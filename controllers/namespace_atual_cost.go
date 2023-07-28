@@ -11,7 +11,7 @@ func AtualCostRequest(namespace string) string {
 
 	url := "http://kubecost-cost-analyzer.prometheus:9090/model/allocation?window=30d&&filterNamespaces=" +
 		namespace +
-		"&&aggregate=namespace&&accumulate=true"
+		"&&aggregate=namespace&&accumulate=true&&shareTenancyCosts=true"
 
 	// Criação de uma requisição GET
 	req, err := http.NewRequest("GET", url, nil)
@@ -43,7 +43,7 @@ func AtualCostRequest(namespace string) string {
 }
 
 // Returns total month Rate cost after the deployment of the yaml files passed
-func decodeJsonAllocationApiKubecost(jsonStr string) float64 {
+func decodeJsonAllocationApiKubecost(jsonStr string, namespace string) float64 {
 
 	var data map[string]interface{}
 
@@ -52,13 +52,13 @@ func decodeJsonAllocationApiKubecost(jsonStr string) float64 {
 		fmt.Println("Could not Unmarshal")
 	}
 
-	// Extrair o totalCost do nó "__idle__"
+	// Extrair o totalCost do namespace
 
-	idleNode, ok := data["data"].([]interface{})[0].(map[string]interface{})["__idle__"].(map[string]interface{})
+	namespaceDetails, ok := data["data"].([]interface{})[0].(map[string]interface{})[namespace].(map[string]interface{})
 	if !ok {
-		fmt.Println("Falha ao extrair o nó '__idle__' do JSON")
+		fmt.Println("Falha ao extrair namespace do JSON")
 	}
-	totalCost, ok := idleNode["totalCost"].(float64)
+	totalCost, ok := namespaceDetails["totalCost"].(float64)
 	if !ok {
 		fmt.Println("Falha ao extrair o campo 'totalCost' do JSON")
 	}

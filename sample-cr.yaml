@@ -1,9 +1,9 @@
 apiVersion: operator.example.com/v1alpha1
 kind: NginxOperator
 metadata:
-  name: cluster
-  namespace: teste
+  name: pod-nginx
+  namespace: teste3
 spec:
-  replicas: 1
-  appLimitCost: 100
+  replicas: 10
+  appLimitCost: 7
   isDeployed: true

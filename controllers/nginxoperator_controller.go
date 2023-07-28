@@ -119,7 +119,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		//panic(err2)
 	}
 
-	isLeader = true
+	/*isLeader = true
 
 	for _, operator := range operators {
 		fmt.Println(operator)
@@ -133,7 +133,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		fmt.Println("Este operador é lider")
 	} else {
 		fmt.Println("Este operador não é lider")
-	}
+	}*/
 
 	sort.Strings(operators)
 	leaderOperator := operators[0]
@@ -166,7 +166,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	fmt.Println("Pedido Allocation")
 	jsonAllocation := AtualCostRequest(req.Namespace)
-	allocationCost := decodeJsonAllocationApiKubecost(jsonAllocation)
+	allocationCost := decodeJsonAllocationApiKubecost(jsonAllocation, req.Namespace)
 	fmt.Println("alocation cost:")
 	fmt.Println(allocationCost)
 
@@ -329,7 +329,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			fmt.Println("Formato errado")
 		}
 
-		id_leader := split[1]
+		//id_leader := split[1]
 		id_selected := split[3]
 		order, err := strconv.ParseBool(split[5])
 		if err != nil {
@@ -343,20 +343,28 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		*/
 
 		//Verificar se sou o operador responsável por executar a ordem e se quem fez a ordem foi o lider
-		if operatorID == id_selected && leaderOperator == id_leader {
+		if operatorID == id_selected /*&& leaderOperator == id_leader*/ {
 			//executar a ordem
 			if order == true {
+				fmt.Println("Entrei no true")
+				fmt.Println(operatorCR.Spec.IsDeployed)
 
 				//Cr atual do operador
 				operatorCR := &operatorv1alpha1.NginxOperator{}
 
 				//get operador existente
 				err := r.Get(ctx, req.NamespacedName, operatorCR)
+				if err != nil {
+					logger.Info("Failed to get Operator resource.", "error", err)
+					// Handle the error, return or retry as needed.
+					//return ctrl.Result{}, err
+				}
 
 				//Update Cr to deploy app
 				operatorCR.Spec.IsDeployed = true
 
 				err = r.Update(ctx, operatorCR)
+				//err = r.Update(ctx, operatorCR)
 				if err != nil && errors.IsNotFound(err) {
 					logger.Info("Operator resource object not found.")
 					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
@@ -371,8 +379,13 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					fmt.Println("ola")
 					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 				}
+				fmt.Println("Entrei no true apos update")
+				fmt.Println(operatorCR.Spec.IsDeployed)
+
 			} else {
 				//Cr atual do operador
+				fmt.Println("Entrei no else")
+				fmt.Println(operatorCR.Spec.IsDeployed)
 				operatorCR := &operatorv1alpha1.NginxOperator{}
 
 				//get operador existente
@@ -381,6 +394,7 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				//Tirar o deployment logo aqui ?
 				operatorCR.Spec.IsDeployed = false
 				err = r.Update(ctx, operatorCR)
+				//err = r.Update(ctx, operatorCR)
 				if err != nil && errors.IsNotFound(err) {
 					logger.Info("Operator resource object not found.")
 					operatorCR.Spec.IsDeployed = true
@@ -392,6 +406,8 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 					//return ctrl.Result{}, utilerrors.NewAggregate([]error{err, r.Status().Update(ctx, operatorCR)})
 				}
+				fmt.Println("Entrei no else apos update")
+				fmt.Println(operatorCR.Spec.IsDeployed)
 			}
 		}
 	})
